@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useStore, ApiProvider, defaultProviderConfigs } from '../store';
-import { Save, ArrowLeft, RefreshCw, Lock, Shield, Eye, EyeOff, Trash2, Key } from 'lucide-react';
+import { Save, ArrowLeft, RefreshCw, Lock, Shield, Eye, EyeOff, Trash2, Key, Database } from 'lucide-react';
 import SecureStorage from '../utils/secureStorage';
+import { calculateStorageSize, clearIndexedDbCache, formatBytes } from '../utils/storageUtils';
 
 interface ModelInfo {
   name: string;
@@ -22,6 +23,11 @@ export function Settings() {
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [modelError, setModelError] = useState('');
 
+  // Storage & cache state
+  const { cacheSize, setCacheSize, sessions, deleteSession } = useStore();
+  const [isCalculatingSize, setIsCalculatingSize] = useState(false);
+  const [isClearingCache, setIsClearingCache] = useState(false);
+
   // Security settings state
   const [showApiKey, setShowApiKey] = useState(false);
   const [isUnlocked, setIsUnlocked] = useState(false);
@@ -36,6 +42,62 @@ export function Settings() {
   useEffect(() => {
     checkSecurityStatus();
   }, []);
+
+  // Calculate cache size on mount
+  useEffect(() => {
+    refreshCacheSize();
+  }, []);
+
+  const refreshCacheSize = async () => {
+    setIsCalculatingSize(true);
+    try {
+      const size = await calculateStorageSize();
+      setCacheSize(size);
+    } finally {
+      setIsCalculatingSize(false);
+    }
+  };
+
+  const handleClearCache = async () => {
+    if (!window.confirm('确定要清除所有页面快照和附件缓存吗？对话记录将保留，但相关页面内容将被删除。')) return;
+    setIsClearingCache(true);
+    try {
+      // Delete IndexedDB blobs for all sessions
+      for (const session of sessions) {
+        for (const msg of session.messages) {
+          if (msg.attachedContext?.snapshotId) {
+            const { deleteContextSnapshot } = await import('../store');
+            await deleteContextSnapshot(msg.attachedContext.snapshotId);
+          }
+          if (msg.attachments) {
+            const { deleteAttachmentBlob } = await import('../store');
+            for (const att of msg.attachments) {
+              await deleteAttachmentBlob(att.id);
+            }
+          }
+        }
+      }
+      // Also run the bulk clear for any orphaned keys
+      await clearIndexedDbCache();
+      await refreshCacheSize();
+    } finally {
+      setIsClearingCache(false);
+    }
+  };
+
+  const handleClearAllHistory = async () => {
+    if (!window.confirm('确定要删除所有对话记录吗？此操作不可恢复。')) return;
+    setIsClearingCache(true);
+    try {
+      // Delete all sessions one by one (also cleans up their IndexedDB data)
+      for (const session of [...sessions]) {
+        await deleteSession(session.id);
+      }
+      await refreshCacheSize();
+    } finally {
+      setIsClearingCache(false);
+    }
+  };
 
   // Load API key from secure storage when provider changes
   useEffect(() => {
@@ -306,6 +368,7 @@ export function Settings() {
       <header className="h-[60px] border-b border-gray-200 dark:border-gray-800 flex items-center px-4 shrink-0">
         <button
           onClick={() => setIsSettingsOpen(false)}
+          aria-label="返回"
           className="p-2 -ml-2 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-gray-600 dark:text-gray-300 mr-2"
         >
           <ArrowLeft className="w-5 h-5" />
@@ -347,6 +410,7 @@ export function Settings() {
           <select
             value={localApiProvider}
             onChange={handleProviderChange}
+            aria-label="API 提供商"
             className="w-full px-3 py-2 bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-md focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent"
           >
             <option value="gemini">Google Gemini</option>
@@ -423,6 +487,7 @@ export function Settings() {
             value={localModel}
             onChange={(e) => setLocalModel(e.target.value)}
             disabled={isLoadingModels}
+            aria-label="模型选择"
             className="w-full px-3 py-2 bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-md focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent disabled:bg-gray-50 disabled:dark:bg-gray-800"
           >
             {availableModels.map((m) => (
@@ -538,6 +603,69 @@ export function Settings() {
               </button>
             </div>
           )}
+        </div>
+        {/* Storage & Cache Section */}
+        <div className="border-t border-gray-200 dark:border-gray-700 pt-6 mt-6">
+          <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-4 flex items-center gap-2">
+            <Database className="w-4 h-4" />
+            存储与缓存
+          </h3>
+
+          {/* Cache Size Display */}
+          <div className="bg-gray-50 dark:bg-gray-800/50 rounded-lg p-4 space-y-2 mb-3">
+            {isCalculatingSize ? (
+              <p className="text-sm text-gray-500">计算中...</p>
+            ) : cacheSize ? (
+              <>
+                <div className="flex justify-between items-center text-sm">
+                  <span className="text-gray-600 dark:text-gray-400">IndexedDB（快照 & 附件）</span>
+                  <span className="font-medium text-gray-800 dark:text-gray-200">{formatBytes(cacheSize.indexedDb)}</span>
+                </div>
+                <div className="flex justify-between items-center text-sm">
+                  <span className="text-gray-600 dark:text-gray-400">设置存储</span>
+                  <span className="font-medium text-gray-800 dark:text-gray-200">{formatBytes(cacheSize.chromeStorage)}</span>
+                </div>
+                <div className="border-t border-gray-200 dark:border-gray-700 pt-2 flex justify-between items-center text-sm font-semibold">
+                  <span className="text-gray-700 dark:text-gray-300">合计</span>
+                  <span className="text-gray-900 dark:text-gray-100">{formatBytes(cacheSize.total)}</span>
+                </div>
+              </>
+            ) : (
+              <p className="text-sm text-gray-500">无法获取存储信息</p>
+            )}
+            <button
+              onClick={refreshCacheSize}
+              disabled={isCalculatingSize}
+              className="mt-1 text-xs text-accent hover:text-blue-600 disabled:text-gray-400 flex items-center gap-1 transition-colors"
+            >
+              <RefreshCw className={`w-3 h-3 ${isCalculatingSize ? 'animate-spin' : ''}`} />
+              刷新
+            </button>
+          </div>
+
+          {/* Clear Cache Button */}
+          <button
+            onClick={handleClearCache}
+            disabled={isClearingCache}
+            className="w-full flex items-center justify-between px-4 py-3 bg-yellow-50 dark:bg-yellow-900/20 rounded-lg hover:bg-yellow-100 dark:hover:bg-yellow-900/30 transition-colors mb-2 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <span className="text-sm text-yellow-700 dark:text-yellow-300">
+              {isClearingCache ? '清除中...' : '清除页面缓存'}
+            </span>
+            <Trash2 className="w-4 h-4 text-yellow-500" />
+          </button>
+
+          {/* Clear All History Button */}
+          <button
+            onClick={handleClearAllHistory}
+            disabled={isClearingCache}
+            className="w-full flex items-center justify-between px-4 py-3 bg-red-50 dark:bg-red-900/20 rounded-lg hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <span className="text-sm text-red-700 dark:text-red-300">
+              {isClearingCache ? '删除中...' : '删除所有对话记录'}
+            </span>
+            <Trash2 className="w-4 h-4 text-red-500" />
+          </button>
         </div>
       </main>
 

@@ -189,6 +189,10 @@ interface AppState {
   updateSessionTitle: (sessionId: string, title: string) => void;
   generateResponse: (userMessage?: string, stagedAttachments?: Array<{ file: File; base64: string }>) => Promise<void>;
 
+  // Cache Size
+  cacheSize: { indexedDb: number; chromeStorage: number; total: number } | null;
+  setCacheSize: (size: { indexedDb: number; chromeStorage: number; total: number } | null) => void;
+
   // Selectors/Computed
   getCurrentSession: () => Session | undefined;
 }
@@ -927,7 +931,11 @@ export const useStore = create<AppState>()(
         } finally {
           set({ isGenerating: false, abortController: null });
         }
-      }
+      },
+
+      // Cache Size
+      cacheSize: null,
+      setCacheSize: (size) => set({ cacheSize: size }),
     }),
     {
       name: 'luminasider-storage',
