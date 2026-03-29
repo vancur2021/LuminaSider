@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
 import { useStore, ApiProvider, defaultProviderConfigs } from '../store';
-import { Save, ArrowLeft, RefreshCw, Lock, Shield, Eye, EyeOff, Trash2, Key, Database } from 'lucide-react';
+import { Save, ArrowLeft, RefreshCw, Lock, Shield, Eye, EyeOff, Trash2, Key, Database, Download } from 'lucide-react';
 import SecureStorage from '../utils/secureStorage';
 import { calculateStorageSize, clearIndexedDbCache, formatBytes } from '../utils/storageUtils';
+import { ExportDialog } from './ExportDialog';
 
 interface ModelInfo {
   name: string;
@@ -27,6 +28,7 @@ export function Settings() {
   const { cacheSize, setCacheSize, sessions, deleteSession } = useStore();
   const [isCalculatingSize, setIsCalculatingSize] = useState(false);
   const [isClearingCache, setIsClearingCache] = useState(false);
+  const [showExportDialog, setShowExportDialog] = useState(false);
 
   // Security settings state
   const [showApiKey, setShowApiKey] = useState(false);
@@ -643,6 +645,15 @@ export function Settings() {
             </button>
           </div>
 
+          {/* Export Button */}
+          <button
+            onClick={() => setShowExportDialog(true)}
+            className="w-full flex items-center justify-between px-4 py-3 bg-gray-50 dark:bg-gray-800/50 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors mb-2"
+          >
+            <span className="text-sm text-gray-700 dark:text-gray-300">导出数据</span>
+            <Download className="w-4 h-4 text-gray-500" />
+          </button>
+
           {/* Clear Cache Button */}
           <button
             onClick={handleClearCache}
@@ -668,6 +679,9 @@ export function Settings() {
           </button>
         </div>
       </main>
+
+      {/* Export Dialog */}
+      {showExportDialog && <ExportDialog onClose={() => setShowExportDialog(false)} />}
 
       <footer className="p-4 border-t border-gray-200 dark:border-gray-800 shrink-0">
         <button
